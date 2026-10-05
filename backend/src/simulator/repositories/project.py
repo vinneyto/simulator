@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+import asyncio
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from simulator.models import Project, ProjectMetadata
+from simulator.persistence.database import create_engine_and_session_factory
+from simulator.persistence.models import AnchorRecord, Base, ProjectCloudRecord, ProjectRecord
+from simulator.repositories.anchor import AnchorRepository
+from simulator.repositories.exceptions import ProjectNotFoundError, RevisionConflictError
+from simulator.repositories.scene_point import ScenePointRepository
+
+
+class ProjectRepository:
+    """Compatibility aggregate assembled from normalized resource repositories."""
+
+    def __init__(self, database_url: str) -> None:
+        self.engine, self.session_factory = create_engine_and_session_factory(database_url)
+        self._initialized = False
+        self._initialize_lock = asyncio.Lock()
+
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+            async with self.engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            self._initialized = True
+
+    async def close(self) -> None:
+        await self.engine.dispose()
+
+    async def create(self, project: Project) -> Project:
+        await self.initialize()
+        async with self.session_factory.begin() as session:
+            session.add(ProjectRecord(id=project.id, name=project.name, revision=project.revision))
+            await session.flush()
+            await self._insert_resources(session, project)
+        return project.model_copy(deep=True)
+
+    async def get(self, project_id: str) -> Project:
+        await self.initialize()
+        async with self.session_factory() as session:
+            return (await self._load(session, project_id)).model_copy(deep=True)
+
+    async def list(self) -> list[Project]:
+        await self.initialize()
+        async with self.session_factory() as session:
+            ids = list(await session.scalars(select(ProjectRecord.id).order_by(ProjectRecord.id)))
+            return [await self._load(session, project_id) for project_id in ids]
+
+    async def list_metadata(self) -> list[ProjectMetadata]:
+        await self.initialize()
+        async with self.session_factory() as session:
+            rows = (await session.execute(self._metadata_query().order_by(ProjectRecord.id))).all()
+            return [ProjectMetadata.model_validate(dict(row._mapping)) for row in rows]
+
+    async def get_metadata(self, project_id: str) -> ProjectMetadata:
+        await self.initialize()
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(self._metadata_query().where(ProjectRecord.id == project_id))
+            ).one_or_none()
+            if row is None:
+                raise ProjectNotFoundError(project_id)
+            return ProjectMetadata.model_validate(dict(row._mapping))
+
+    @staticmethod
+    def _metadata_query():
+        anchors = (
+            select(AnchorRecord.project_id, func.count().label("anchor_count"))
+            .group_by(AnchorRecord.project_id)
+            .subquery()
+        )
+        clouds = (
+            select(ProjectCloudRecord.project_id, func.count().label("cloud_count"))
+            .group_by(ProjectCloudRecord.project_id)
+            .subquery()
+        )
+        return (
+            select(
+                ProjectRecord.id,
+                ProjectRecord.name,
+                ProjectRecord.revision,
+                func.coalesce(anchors.c.anchor_count, 0).label("anchor_count"),
+                func.coalesce(clouds.c.cloud_count, 0).label("cloud_count"),
+            )
+            .outerjoin(anchors, anchors.c.project_id == ProjectRecord.id)
+            .outerjoin(clouds, clouds.c.project_id == ProjectRecord.id)
+        )
+
+    async def delete(self, project_id: str) -> None:
+        await self.initialize()
+        async with self.session_factory.begin() as session:
+            result = await session.execute(
+                delete(ProjectRecord).where(ProjectRecord.id == project_id)
+            )
+            if result.rowcount == 0:
+                raise ProjectNotFoundError(project_id)
+
+    async def commit(
+        self, draft: Project, expected_revision: int, *, clear_clouds: bool = False
+    ) -> Project:
+        await self.initialize()
+        async with self.session_factory.begin() as session:
+            next_revision = expected_revision + 1
+            changed = await session.execute(
+                update(ProjectRecord)
+                .where(ProjectRecord.id == draft.id, ProjectRecord.revision == expected_revision)
+                .values(name=draft.name, revision=next_revision)
+            )
+            if changed.rowcount != 1:
+                current = await session.scalar(
+                    select(ProjectRecord.revision).where(ProjectRecord.id == draft.id)
+                )
+                if current is None:
+                    raise ProjectNotFoundError(draft.id)
+                raise RevisionConflictError(
+                    f"expected revision {expected_revision}, current revision is {current}"
+                )
+            committed = draft.model_copy(deep=True)
+            committed.revision = next_revision
+            previous = await self._load(session, draft.id)
+            if clear_clouds:
+                await session.execute(
+                    delete(ProjectCloudRecord).where(ProjectCloudRecord.project_id == draft.id)
+                )
+            await self._sync_project_changes(session, previous, committed)
+        return committed.model_copy(deep=True)
+
+    async def _load(self, session: AsyncSession, project_id: str) -> Project:
+        record = await session.get(ProjectRecord, project_id)
+        if record is None:
+            raise ProjectNotFoundError(project_id)
+        anchors = await AnchorRepository(session).list(project_id)
+        scene_points = await ScenePointRepository(session).list(project_id)
+        return Project(
+            id=record.id,
+            name=record.name,
+            revision=record.revision,
+            anchors=anchors,
+            scene_points=scene_points,
+        )
+
+    @staticmethod
+    async def _insert_resources(session: AsyncSession, project: Project) -> None:
+        await AnchorRepository(session).replace(project.id, project.anchors)
+        await ScenePointRepository(session).replace(project.id, project.scene_points)
+
+    @staticmethod
+    async def _sync_project_changes(session: AsyncSession, before: Project, after: Project) -> None:
+        if before.anchors != after.anchors:
+            await AnchorRepository(session).replace(after.id, after.anchors)
+        if before.scene_points != after.scene_points:
+            await ScenePointRepository(session).replace(after.id, after.scene_points)
