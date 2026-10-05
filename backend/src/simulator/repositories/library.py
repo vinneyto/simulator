@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from simulator.persistence.enums import LibraryAssetStatus
+from simulator.persistence.models import LibraryAssetRecord
+
+
+class LibraryRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    async def list_ready(self) -> list[LibraryAssetRecord]:
+        async with self.sessions() as session:
+            return list(
+                (
+                    await session.scalars(
+                        select(LibraryAssetRecord)
+                        .where(LibraryAssetRecord.status == LibraryAssetStatus.READY)
+                        .order_by(LibraryAssetRecord.created_at.desc())
+                    )
+                ).all()
+            )
+
+    async def get(self, asset_id: str) -> LibraryAssetRecord | None:
+        async with self.sessions() as session:
+            return await session.get(LibraryAssetRecord, asset_id)
+
+    async def create(self, record: LibraryAssetRecord) -> None:
+        async with self.sessions.begin() as session:
+            session.add(record)
+
+    async def mark_ready(self, asset_id: str) -> None:
+        async with self.sessions.begin() as session:
+            await session.execute(
+                update(LibraryAssetRecord)
+                .where(
+                    LibraryAssetRecord.id == asset_id,
+                    LibraryAssetRecord.status == LibraryAssetStatus.PENDING,
+                )
+                .values(status=LibraryAssetStatus.READY)
+            )
+
+    async def update_defaults(
+        self,
+        asset_id: str,
+        rotation: tuple[float, float, float],
+        scale: float,
+        offset: tuple[float, float, float] | None,
+    ) -> LibraryAssetRecord | None:
+        async with self.sessions.begin() as session:
+            record = await session.get(LibraryAssetRecord, asset_id)
+            if record is None or record.status != LibraryAssetStatus.READY:
+                return None
+            (
+                record.default_rotation_x_deg,
+                record.default_rotation_y_deg,
+                record.default_rotation_z_deg,
+            ) = rotation
+            record.default_scale = scale
+            if offset is not None:
+                record.default_offset_x, record.default_offset_y, record.default_offset_z = offset
+            return record

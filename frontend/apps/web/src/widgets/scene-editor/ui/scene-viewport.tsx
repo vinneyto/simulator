@@ -1,0 +1,40 @@
+"use client";
+
+import { Canvas } from "@react-three/fiber";
+
+import { SceneContents } from "./scene-contents";
+import { SceneViewportFrame } from "./scene-viewport-frame";
+import type { SceneViewportProps } from "./scene-viewport-types";
+
+export function SceneViewport(props: SceneViewportProps) {
+  return (
+    <SceneViewportFrame
+      available
+      clouds={props.clouds}
+      onDeleteAnchor={props.onDeleteAnchor}
+      renderScene={(context) => (
+        <Canvas
+          camera={{ far: 100, fov: 42, near: 0.01, position: [4, 3, 6] }}
+          dpr={[1, 2]}
+          gl={{ antialias: false }}
+          shadows
+        >
+          <SceneContents
+            anchors={props.anchors}
+            clouds={props.clouds}
+            initialCloudIds={props.initialCloudIds}
+            background={context.background}
+            dark={context.dark}
+            onAddAnchor={props.onAddAnchor}
+            onAddCloud={props.onAddCloud}
+            onOpenAnchorMenu={context.onOpenAnchorMenu}
+            onSurfaceError={context.onSurfaceError}
+            onSurfaceLoading={context.onSurfaceLoading}
+            onSurfaceReady={context.onSurfaceReady}
+            onUpdateAnchorLift={props.onUpdateAnchorLift}
+          />
+        </Canvas>
+      )}
+    />
+  );
+}

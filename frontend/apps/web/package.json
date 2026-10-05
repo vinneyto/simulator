@@ -1,0 +1,50 @@
+{
+  "name": "@simulator/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "api:generate": "orval --config orval.config.ts",
+    "api:check": "npm run api:generate && git diff --exit-code -- src/shared/api/generated && test -z \"$(git ls-files --others --exclude-standard src/shared/api/generated)\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "@sparkjsdev/spark": "^2.1.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@tanstack/react-query": "^5.102.8",
+    "3dgs-tile-webgpu": "github:vinneyto/3dgs_tile_webgpu#7827bc22536dd90875c372cbc7576821867df607",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.39.0",
+    "next": "^16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss": "^4.3.3",
+    "three": "^0.185.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@types/three": "^0.185.4",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "eslint": "^9.35.0",
+    "eslint-config-next": "^16.3.4",
+    "happy-dom": "^20.14.0",
+    "orval": "^8.36.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

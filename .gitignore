@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.py[cod]
+.env
+.env.local
+node_modules/
+.next/
+out/
+*.tsbuildinfo

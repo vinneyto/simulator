@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from simulator.models import ScenePoint
+from simulator.persistence.models import ScenePointRecord, Vector3
+from simulator.repositories.sync import sync_rows
+
+
+class ScenePointRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list(self, project_id: str) -> dict[str, ScenePoint]:
+        records = await self.session.scalars(
+            select(ScenePointRecord).where(ScenePointRecord.project_id == project_id)
+        )
+        return {
+            record.id: ScenePoint(
+                id=record.id, label=record.label, position=record.position.as_tuple()
+            )
+            for record in records
+        }
+
+    async def replace(self, project_id: str, points: dict[str, ScenePoint]) -> None:
+        await sync_rows(
+            self.session,
+            ScenePointRecord,
+            project_id,
+            [
+                dict(
+                    id=item.id,
+                    project_id=project_id,
+                    label=item.label,
+                    position=Vector3(*item.position),
+                )
+                for item in points.values()
+            ],
+        )
